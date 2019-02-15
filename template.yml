@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion : '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Lambda handler definitions
+
+Mappings:
+
+  TopicNamesMap:
+    Topics:
+      Request: 'Request'
+      Response: 'Response'
+
+
+Resources:
+
+  ####
+  # SNS topics
+  ####
+  PageCrawlResponseTopic:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      TopicName: !FindInMap [TopicNamesMap, Topics, Response]
+      Subscription:
+      - Endpoint:
+          Fn::GetAtt: [PageCrawlResponseLambdaFunction, Arn]
+        Protocol: lambda
+
+
+  PageCrawlRequestTopic:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      TopicName: !FindInMap [TopicNamesMap, Topics, Request]
+      Subscription:
+      - Endpoint:
+          Fn::GetAtt: [PageCrawlRequestLambdaFunction, Arn]
+        Protocol: lambda
+
+
+  ####
+  # Lambda invocation permissions for SNS topics
+  ####
+  PageCrawlResponseTopicPermissions:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Fn::GetAtt: [PageCrawlResponseLambdaFunction, Arn]
+      Action: 'lambda:InvokeFunction'
+      Principal: 'sns.amazonaws.com'
+      SourceArn: !Ref PageCrawlResponseTopic
+
+
+  PageCrawlRequestTopicPermissions:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Fn::GetAtt: [PageCrawlRequestLambdaFunction, Arn]
+      Action: 'lambda:InvokeFunction'
+      Principal: 'sns.amazonaws.com'
+      SourceArn: !Ref PageCrawlRequestTopic
+
+
+  ####
+  # Lambda definitions
+  ####
+  PageCrawlRequestLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: target/news-headlines-1.0-SNAPSHOT.jar
+      Handler: com.iodice.news.lambda.handler.PageCrawlRequestLambda
+      Runtime: java8
+      Timeout: 300
+      MemorySize: 256
+      ReservedConcurrentExecutions: 5
+      Role:
+        Fn::GetAtt: [LambdaExecutionRole, Arn]
+      Environment:
+        Variables:
+          ResultsTopic:
+            Fn::Join: [ ':', [
+              'arn:aws:sns',
+              !Ref 'AWS::Region',
+              !Ref 'AWS::AccountId',
+              !FindInMap [TopicNamesMap, Topics, Response]
+            ]]
+
+
+  PageCrawlResponseLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: target/news-headlines-1.0-SNAPSHOT.jar
+      Handler: com.iodice.news.lambda.handler.PageCrawlResponseLambda
+      Runtime: java8
+      Timeout: 300
+      MemorySize: 256
+      Role:
+        Fn::GetAtt: [LambdaExecutionRole, Arn]
+      Environment:
+        Variables:
+          ResultsTopic:
+            Fn::Join: [ ':', [
+              'arn:aws:sns',
+              !Ref 'AWS::Region',
+              !Ref 'AWS::AccountId',
+              !FindInMap [TopicNamesMap, Topics, Request]
+            ]]
+
+
+  ####
+  # Lambda permissions
+  ####
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:*
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action:
+            - sns:*
+            Resource: arn:aws:sns:*
+
+  ####
+  # DynamoDB tables
+  ####
+  ArticleTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      TableName: Articles
+      AttributeDefinitions:
+        - AttributeName: "PK"
+          AttributeType: "S"
+        - AttributeName: "RK"
+          AttributeType: "S"
+      KeySchema:
+        -
+          AttributeName: "PK"
+          KeyType: "HASH"
+        -
+          AttributeName: "RK"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
